@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { Platform } from "react-native";
+import { AppState, Platform } from "react-native";
 import * as SecureStore from "expo-secure-store";
 
 const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL!;
@@ -19,3 +19,12 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     detectSessionInUrl: false,
   },
 });
+
+// アプリが前に出ているあいだだけログインを自動更新する（Supabase の React Native の手順どおり）。
+// これがないと、裏に回していた間に期限が切れたまま問い合わせ、資料などが0件に見える。
+if (Platform.OS !== "web") {
+  AppState.addEventListener("change", (state) => {
+    if (state === "active") supabase.auth.startAutoRefresh();
+    else supabase.auth.stopAutoRefresh();
+  });
+}
