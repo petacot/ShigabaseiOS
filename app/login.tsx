@@ -12,11 +12,12 @@ import {
   Alert,
 } from "react-native";
 import { Redirect, router } from "expo-router";
-import { useAuth } from "@/hooks/use-auth";
+import { homeAfterLogin, useAuth } from "@/hooks/use-auth";
 import { supabase } from "@/lib/supabase";
 import { scale, moderateScale } from "@/lib/scale";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { Colors } from "@/constants/theme";
+import { NO_MAIL_MESSAGE, cannotReceiveMail, sendErrorMessage } from "@/lib/password-reset";
 
 export default function LoginScreen() {
   const [email, setEmail] = useState("");
@@ -26,34 +27,48 @@ export default function LoginScreen() {
   const [resetModalVisible, setResetModalVisible] = useState(false);
   const [resetEmail, setResetEmail] = useState("");
   const [resetLoading, setResetLoading] = useState(false);
-  const [resetSent, setResetSent] = useState(false);
-  const { signIn, user } = useAuth();
+  const { signIn, user, passwordChangeReason } = useAuth();
   const colorScheme = useColorScheme() ?? "light";
   const colors = Colors[colorScheme];
 
+  // メールにはリンクではなくコードを送り、続きは再設定の画面で入れてもらう
+  // （リンクはメールの安全確認が先に開いて使えなくなることがあり、届いた端末と違う端末でも開けない）
   const handleResetPassword = async () => {
-    if (!resetEmail.trim()) {
+    const target = resetEmail.trim();
+    if (!target) {
       Alert.alert("エラー", "メールアドレスを入力してください");
       return;
     }
+    if (cannotReceiveMail(target)) {
+      Alert.alert("メールを送れません", NO_MAIL_MESSAGE);
+      return;
+    }
     setResetLoading(true);
-    const { error } = await supabase.auth.resetPasswordForEmail(resetEmail.trim());
+    const { error } = await supabase.auth.resetPasswordForEmail(target);
     setResetLoading(false);
     if (error) {
-      Alert.alert("エラー", "メールの送信に失敗しました。メールアドレスを確認してください。");
-    } else {
-      setResetSent(true);
+      Alert.alert("エラー", sendErrorMessage(error));
+      return;
     }
+    closeResetModal();
+    router.replace({ pathname: "/reset-password", params: { email: target, sent: "1" } });
+  };
+
+  // 前に送ったコードが手元にあるときは、送り直さずに入力へ進む（送り直すと前のコードは使えなくなる）
+  const openCodeEntry = () => {
+    const target = resetEmail.trim();
+    closeResetModal();
+    router.replace({ pathname: "/reset-password", params: target ? { email: target } : {} });
   };
 
   const closeResetModal = () => {
     setResetModalVisible(false);
     setResetEmail("");
-    setResetSent(false);
   };
 
   if (user) {
-    return <Redirect href="/(tabs)" />;
+    // 仮のパスワードや初期パスワードでログインしたときは、ホームではなくパスワードの変更へ
+    return <Redirect href={homeAfterLogin(user, passwordChangeReason)} />;
   }
 
   const handleLogin = async () => {
@@ -158,67 +173,56 @@ export default function LoginScreen() {
       <Modal visible={resetModalVisible} transparent animationType="fade">
         <View style={styles.modalOverlay}>
           <View style={[styles.modalCard, { backgroundColor: colors.cardBg }]}>
-            {resetSent ? (
-              <>
-                <Text style={[styles.modalTitle, { color: colors.text }]}>
-                  メールを送信しました
-                </Text>
-                <Text style={[styles.modalDesc, { color: colors.icon }]}>
-                  {resetEmail} にパスワード再設定用のリンクを送りました。メールをご確認ください。
-                </Text>
-                <TouchableOpacity
-                  style={[styles.modalButton, { backgroundColor: colors.tint }]}
-                  onPress={closeResetModal}
-                >
-                  <Text style={styles.modalButtonText}>閉じる</Text>
-                </TouchableOpacity>
-              </>
-            ) : (
-              <>
-                <Text style={[styles.modalTitle, { color: colors.text }]}>
-                  パスワードをリセット
-                </Text>
-                <Text style={[styles.modalDesc, { color: colors.icon }]}>
-                  登録済みのメールアドレスを入力してください。パスワード再設定用のリンクをお送りします。
-                </Text>
-                <TextInput
-                  style={[
-                    styles.modalInput,
-                    {
-                      color: colors.text,
-                      borderColor: colors.icon,
-                      backgroundColor: colors.background,
-                    },
-                  ]}
-                  placeholder="example@email.com"
-                  placeholderTextColor={colors.icon}
-                  value={resetEmail}
-                  onChangeText={setResetEmail}
-                  autoCapitalize="none"
-                  keyboardType="email-address"
-                  autoCorrect={false}
-                />
-                <TouchableOpacity
-                  style={[styles.modalButton, { backgroundColor: colors.tint }]}
-                  onPress={handleResetPassword}
-                  disabled={resetLoading}
-                >
-                  {resetLoading ? (
-                    <ActivityIndicator color="#fff" />
-                  ) : (
-                    <Text style={styles.modalButtonText}>送信</Text>
-                  )}
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.modalCancel}
-                  onPress={closeResetModal}
-                >
-                  <Text style={[styles.subLinkText, { color: colors.icon }]}>
-                    キャンセル
-                  </Text>
-                </TouchableOpacity>
-              </>
-            )}
+            <Text style={[styles.modalTitle, { color: colors.text }]}>
+              パスワードをリセット
+            </Text>
+            <Text style={[styles.modalDesc, { color: colors.icon }]}>
+              登録済みのメールアドレスを入力してください。パスワード再設定用のコードをメールでお送りします。
+            </Text>
+            <TextInput
+              style={[
+                styles.modalInput,
+                {
+                  color: colors.text,
+                  borderColor: colors.icon,
+                  backgroundColor: colors.background,
+                },
+              ]}
+              placeholder="example@email.com"
+              placeholderTextColor={colors.icon}
+              value={resetEmail}
+              onChangeText={setResetEmail}
+              autoCapitalize="none"
+              keyboardType="email-address"
+              autoCorrect={false}
+            />
+            <TouchableOpacity
+              style={[styles.modalButton, { backgroundColor: colors.tint }]}
+              onPress={handleResetPassword}
+              disabled={resetLoading}
+            >
+              {resetLoading ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.modalButtonText}>コードを送る</Text>
+              )}
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.modalCancel}
+              onPress={openCodeEntry}
+            >
+              <Text style={[styles.subLinkText, { color: colors.tint }]}>
+                コードを受け取っている方はこちら
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.modalCancel}
+              onPress={closeResetModal}
+            >
+              <Text style={[styles.subLinkText, { color: colors.icon }]}>
+                キャンセル
+              </Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -309,6 +313,10 @@ const styles = StyleSheet.create({
     padding: scale(24),
   },
   modalCard: {
+    // iPadやブラウザで横に伸びすぎないようにする
+    width: "100%",
+    maxWidth: 480,
+    alignSelf: "center",
     borderRadius: scale(16),
     padding: scale(24),
   },

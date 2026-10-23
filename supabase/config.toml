@@ -195,6 +195,12 @@ otp_expiry = 3600
 # subject = "You have been invited"
 # content_path = "./supabase/templates/invite.html"
 
+# パスワード再設定のメールは、リンクではなくコードだけを送る。アプリの再設定の画面でコードと新しいパスワードを入れる。
+# リンクを入れると、メールの安全確認が先に開いたときにコードも使えなくなる。本番の Reset Password も同じ件名・本文にする
+[auth.email.template.recovery]
+subject = "SHIGABASE パスワード再設定のコード"
+content_path = "./supabase/templates/recovery.html"
+
 [auth.sms]
 # Allow/disallow new user signups via SMS to your project.
 enable_signup = false

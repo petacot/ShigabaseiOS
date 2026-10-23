@@ -13,6 +13,7 @@ import { useColorScheme } from "@/hooks/use-color-scheme";
 import { Colors } from "@/constants/theme";
 import { Ionicons } from "@expo/vector-icons";
 import { supabase } from "@/lib/supabase";
+import { hasTemporaryPassword } from "@/lib/password-reset";
 
 
 export default function MenuScreen() {
@@ -101,6 +102,21 @@ export default function MenuScreen() {
             </View>
           ))}
         </View>
+        {/* ログイン直後の変更を「あとで」にした人に、仮のパスワードのままだと知らせる */}
+        {hasTemporaryPassword(user.user_metadata) && (
+          <Text style={[styles.cardDesc, { color: "#b45309", marginTop: 4 }]}>
+            管理者が決め直した仮のパスワードのままです。自分で決めたパスワードに変えてください。
+          </Text>
+        )}
+        <TouchableOpacity
+          style={[styles.outlineBtn, { borderColor: colors.tint }]}
+          onPress={() => router.push("/change-password")}
+        >
+          <Text style={[styles.outlineBtnText, { color: colors.tint }]}>
+            パスワードを変更する
+          </Text>
+          <Ionicons name="chevron-forward" size={16} color={colors.tint} />
+        </TouchableOpacity>
       </View>
 
       {/* アナリスト以上: コンテンツ投稿 */}
