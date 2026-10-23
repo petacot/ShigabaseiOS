@@ -87,6 +87,11 @@ function AppLayout() {
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="login" options={{ headerShown: false }} />
         <Stack.Screen name="register" options={{ headerShown: false }} />
+        <Stack.Screen name="reset-password" options={{ headerShown: false }} />
+        <Stack.Screen
+          name="change-password"
+          options={{ title: "パスワードの変更", headerBackTitle: "戻る" }}
+        />
         <Stack.Screen
           name="admin/invite"
           options={{ title: "招待コード管理", headerBackTitle: "戻る" }}

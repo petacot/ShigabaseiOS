@@ -6,18 +6,28 @@ import { Alert } from "react-native";
 import { Platform } from "react-native";
 import * as SecureStore from "expo-secure-store";
 import { withTimeout } from "@/lib/scoring/net";
+import { hasTemporaryPassword, isDefaultPlayerPassword } from "@/lib/password-reset";
 
 type AppRole = "player" | "analyst" | "admin" | "ob";
+// 仮のパスワード（管理者が決め直したもの）か、一括登録の初期パスワードでログインした直後の印
+export type PasswordChangeReason = "temporary" | "default";
 
 interface AuthContextType {
   user: User | null;
   session: Session | null;
   roles: AppRole[];
   isLoading: boolean;
+  passwordChangeReason: PasswordChangeReason | null;
+  clearPasswordChangeReason: () => void;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (code: string, email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
   hasRole: (role: AppRole) => boolean;
+}
+
+// ログインした直後の行き先。ログイン画面の自動の移動とログインの処理が同じ行き先になるよう、ここで決める
+export function homeAfterLogin(user: User | null, reason: PasswordChangeReason | null): "/change-password" | "/(tabs)" {
+  return reason || hasTemporaryPassword(user?.user_metadata) ? "/change-password" : "/(tabs)";
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -27,6 +37,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [roles, setRoles] = useState<AppRole[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [passwordChangeReason, setPasswordChangeReason] = useState<PasswordChangeReason | null>(null);
   // サインアップ中は onAuthStateChange からのロール取得を抑制するフラグ
   const signingUp = useRef(false);
 
@@ -93,12 +104,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signIn = async (email: string, password: string) => {
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    // 初期パスワードかどうかは入力した値でしか分からないので、ログインの結果が届く前に印を付けておく
+    // （ログイン画面はログインできた時点で自動で移動するため、印が後から付くと行き先がずれる）
+    const usingDefault = isDefaultPlayerPassword(email, password);
+    setPasswordChangeReason(usingDefault ? "default" : null);
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) {
+      setPasswordChangeReason(null);
       Alert.alert("ログインエラー", "メールアドレスまたはパスワードが間違っています");
       throw error;
     }
-    router.replace("/(tabs)");
+    const reason: PasswordChangeReason | null = hasTemporaryPassword(data.user?.user_metadata)
+      ? "temporary"
+      : usingDefault
+      ? "default"
+      : null;
+    setPasswordChangeReason(reason);
+    router.replace(homeAfterLogin(data.user, reason));
   };
 
   const signUp = async (code: string, email: string, password: string) => {
@@ -152,14 +174,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       Alert.alert("エラー", error.message);
       return;
     }
+    setPasswordChangeReason(null);
     router.replace("/login");
   };
 
   const hasRole = (role: AppRole) => roles.includes(role);
+  const clearPasswordChangeReason = () => setPasswordChangeReason(null);
 
   return (
     <AuthContext.Provider
-      value={{ user, session, roles, isLoading, signIn, signUp, signOut, hasRole }}
+      value={{ user, session, roles, isLoading, passwordChangeReason, clearPasswordChangeReason, signIn, signUp, signOut, hasRole }}
     >
       {children}
     </AuthContext.Provider>

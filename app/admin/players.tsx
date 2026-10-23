@@ -9,6 +9,7 @@ import {
   Alert,
   Modal,
   FlatList,
+  Platform,
 } from "react-native";
 import { useState } from "react";
 import { Redirect, router } from "expo-router";
@@ -57,6 +58,12 @@ export default function AdminPlayersScreen() {
 
   // Tab2: ロール管理 state
   const [roleModalUserId, setRoleModalUserId] = useState<string | null>(null);
+  // 再発行した仮のパスワード。閉じたら二度と表示しない
+  const [resetResult, setResetResult] = useState<{
+    name: string;
+    email: string | null;
+    password: string;
+  } | null>(null);
 
   // Tab3: 対戦チーム state
   const [teamName, setTeamName] = useState("");
@@ -168,6 +175,28 @@ export default function AdminPlayersScreen() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["admin_users_with_roles"] });
     },
+    onError: (e: Error) => Alert.alert("エラー", e.message),
+  });
+
+  // メールが届かない一括登録のアカウントでも使えるよう、管理者が仮のパスワードを決め直す
+  const resetPasswordMutation = useMutation({
+    mutationFn: async (target: { id: string; display_name: string | null }) => {
+      const { data, error } = await supabase.functions.invoke("admin-reset-password", {
+        body: { userId: target.id },
+      });
+      if (error) {
+        // 関数が返した理由（管理者でない、など）をそのまま見せる
+        let message = "パスワードを決め直せませんでした";
+        try {
+          const body = await (error as { context?: Response }).context?.json();
+          if (body?.error) message = body.error;
+        } catch {}
+        throw new Error(message);
+      }
+      const result = data as { email: string | null; temporaryPassword: string };
+      return { name: target.display_name ?? "（名前なし）", email: result.email, password: result.temporaryPassword };
+    },
+    onSuccess: (result) => setResetResult(result),
     onError: (e: Error) => Alert.alert("エラー", e.message),
   });
 
@@ -475,7 +504,7 @@ export default function AdminPlayersScreen() {
               </Text>
             </View>
             <Text style={[styles.cardDesc, { color: colors.icon }]}>
-              各ユーザーのロール（権限）を管理します
+              各ユーザーのロール（権限）を管理します。パスワードを忘れた部員には、仮のパスワードを再発行できます
             </Text>
 
             {usersLoading ? (
@@ -538,6 +567,36 @@ export default function AdminPlayersScreen() {
                       </TouchableOpacity>
                     )}
                   </View>
+                  {/* 自分のパスワードは、今のパスワードを確かめるメニューの画面で変える */}
+                  {u.id !== user.id && (
+                    <TouchableOpacity
+                      style={styles.resetPwBtn}
+                      disabled={resetPasswordMutation.isPending}
+                      onPress={() =>
+                        Alert.alert(
+                          "パスワードの再発行",
+                          `${u.display_name ?? "この部員"} のパスワードを仮のものに決め直しますか？今のパスワードは使えなくなります。`,
+                          [
+                            { text: "キャンセル", style: "cancel" },
+                            {
+                              text: "再発行する",
+                              style: "destructive",
+                              onPress: () => resetPasswordMutation.mutate(u),
+                            },
+                          ]
+                        )
+                      }
+                    >
+                      {resetPasswordMutation.isPending && resetPasswordMutation.variables?.id === u.id ? (
+                        <ActivityIndicator size="small" color={colors.icon} />
+                      ) : (
+                        <Ionicons name="key-outline" size={14} color={colors.icon} />
+                      )}
+                      <Text style={[styles.resetPwBtnText, { color: colors.icon }]}>
+                        パスワードを再発行
+                      </Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
               ))
             ) : (
@@ -710,6 +769,35 @@ export default function AdminPlayersScreen() {
           )}
         </View>
       </Modal>
+
+      {/* 再発行した仮のパスワード */}
+      <Modal visible={resetResult !== null} transparent animationType="fade">
+        <View style={styles.resultOverlay}>
+          <View style={[styles.resultCard, { backgroundColor: colorScheme === "dark" ? "#2c2c2e" : "#fff" }]}>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>
+              仮のパスワードを発行しました
+            </Text>
+            <Text style={[styles.userName, { color: colors.text }]}>{resetResult?.name}</Text>
+            <Text style={[styles.resultLabel, { color: colors.icon }]}>ログインのメールアドレス</Text>
+            <Text selectable style={[styles.resultValue, { color: colors.text }]}>
+              {resetResult?.email ?? "（不明）"}
+            </Text>
+            <Text style={[styles.resultLabel, { color: colors.icon }]}>仮のパスワード</Text>
+            <Text selectable style={[styles.tempPassword, { color: colors.text }]}>
+              {resetResult?.password}
+            </Text>
+            <Text style={[styles.infoText, { color: colors.icon }]}>
+              本人に伝えてください。この画面を閉じると、もう表示できません。本人がログインすると、自分のパスワードに変える画面が出ます。
+            </Text>
+            <TouchableOpacity
+              style={[styles.submitBtn, { backgroundColor: colors.tint }]}
+              onPress={() => setResetResult(null)}
+            >
+              <Text style={styles.submitBtnText}>閉じる</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -820,6 +908,38 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   addRoleBtnText: { fontSize: 13 },
+  resetPwBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    gap: 4,
+    paddingVertical: 4,
+  },
+  resetPwBtnText: { fontSize: 13 },
+  resultOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "center",
+    padding: 24,
+  },
+  resultCard: {
+    // iPadやブラウザで横に伸びすぎないようにする
+    width: "100%",
+    maxWidth: 480,
+    alignSelf: "center",
+    borderRadius: 16,
+    padding: 20,
+    gap: 6,
+  },
+  resultLabel: { fontSize: 12, marginTop: 6 },
+  resultValue: { fontSize: 15, fontWeight: "500" },
+  // 字の形で見分けやすいよう、等幅の字で大きく出す
+  tempPassword: {
+    fontSize: 22,
+    fontWeight: "700",
+    fontFamily: Platform.select({ ios: "Menlo", default: "monospace" }),
+    marginBottom: 8,
+  },
   emptyText: { fontSize: 14, textAlign: "center", paddingVertical: 16 },
   teamRow: {
     flexDirection: "row",
